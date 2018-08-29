@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 
 import random as rn
+import tools.superdict as sd
+import math
+import numpy as np
 # Here we will simulate data for testing the model.
+
 
 def empty_data():
     return {
@@ -14,6 +18,7 @@ def empty_data():
                         , 'remaining_usage': 0  # Y_np
                     } for p in range(1)
                 }
+                , 'initial_state': 0  # unavailable (0) or available (1)
                 , 'station': ''  # E_n
                 , 'operations': []  # B_no
             } for m in range(1)
@@ -50,36 +55,58 @@ def empty_data():
     }
 
 
-def generate_data(num_machines, num_operations, num_stations):
-    input_data = empty_data()
+def generate_data(num_machines, num_operations=3, num_stations=3):
+    num_operations = 3
+    num_stations = 3
+    num_machines = 50
+
+    input_data = {}
+
     maint_intervals = [125, 300, 500]
-    maintenances = range(len(maint_intervals))
     hour_dispo = [329, 348, 354, 344, 326, 335]
+
+    maintenances = range(len(maint_intervals))
     periods = range(len(hour_dispo))
     operations = range(num_operations)
     stations = range(num_stations)
     machines = range(num_machines)
 
+    maint_cap_perc = 0.15
+    # TODO: cannot do it like this because I can have more unavailables than capacity
+    initial_state = {m: np.random.choice(2, p=[maint_cap_perc, 1 - maint_cap_perc])
+                     for m in machines}
+
     d_params = input_data['parameters'] = {'max_hours': 60, 'min_rem_usage': 0.1, 'min_rem_maint': 0.1}
     d_maints = input_data['maintenances'] = {p: {'usage': val} for p, val in enumerate(maint_intervals)}
-    input_data['machines'] = {
+    d_machines = input_data['machines'] = {
         m: {
             'maintenances': {
                 p: {
                     'maint_duration': 0  # TODO
-                    , 'remaining_maint': rn.randrange(
+                    , 'remaining_maint': rn.uniform(
                         d_params['min_rem_maint'], 0  # TODO
-                    )
-                    , 'remaining_usage': rn.randrange(
-                        d_params['min_rem_usage'], d_maints[p]['usage']
-                    )
+                    ) if not initial_state[m] else 0
+                    , 'remaining_usage':
+                        rn.uniform(
+                            d_params['min_rem_usage'], d_maints[p]['usage']
+                        ) if initial_state[m] else 0
                 } for p in maintenances
             }
+            , 'initial_state': initial_state[m]
             , 'station': rn.choice(stations)
-            , 'operations': rn.sample(operations)
+            # Each resource has at least one (random) task.
+            # With 30% prob: the resource gets each of the other tasks.
+            , 'operations': set(
+                rn.sample(operations, 1) +
+                [np.random.choice([None, o], p=[0.7, 0.3]) for o in operations]
+            ).difference({None})
 
         } for m in machines
     }
+    station_len = \
+        sd.SuperDict(d_machines). \
+        index_by_property('station').\
+        to_lendict()
 
     input_data['operations'] = {
         o: {
@@ -90,8 +117,8 @@ def generate_data(num_machines, num_operations, num_stations):
     }
     input_data['time'] = {t: val for t, val in enumerate(hour_dispo)}
     input_data['stations'] = {
-        st: {'capacity': 0} for st in stations
+        st: {'capacity': math.ceil(maint_cap_perc * station_len[st])} for st in stations
     }
-    # num_machines
 
-    return {}
+    return input_data
+
